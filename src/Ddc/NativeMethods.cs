@@ -39,6 +39,25 @@ internal static unsafe partial class NativeMethods
 
     internal const uint MONITORINFOF_PRIMARY = 1;
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct DISPLAY_DEVICEW
+    {
+        public uint cb;
+        public fixed char DeviceName[32];
+        public fixed char DeviceString[128];
+        public uint StateFlags;
+        public fixed char DeviceID[128];
+        public fixed char DeviceKey[128];
+    }
+
+    [LibraryImport("user32.dll", EntryPoint = "EnumDisplayDevicesW", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool EnumDisplayDevicesW(
+        string? lpDevice,
+        uint iDevNum,
+        DISPLAY_DEVICEW* lpDisplayDevice,
+        uint dwFlags);
+
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool EnumDisplayMonitors(

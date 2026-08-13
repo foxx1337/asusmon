@@ -9,14 +9,20 @@ namespace AsusMon.Monitors;
 internal sealed class DisplaySet : IDisposable
 {
     private readonly List<AsusDisplay> _displays;
+    private readonly CapabilityCache? _cache;
 
-    private DisplaySet(List<AsusDisplay> displays) => _displays = displays;
+    private DisplaySet(List<AsusDisplay> displays, CapabilityCache? cache)
+    {
+        _displays = displays;
+        _cache = cache;
+    }
 
     public int Count => _displays.Count;
 
     public IReadOnlyList<AsusDisplay> All => _displays;
 
-    public static DisplaySet Open() => new(DisplayCatalog.Open());
+    public static DisplaySet Open(CapabilityCache? cache = null) =>
+        new(DisplayCatalog.Open(cache), cache);
 
     /// <summary>
     /// The monitor at <paramref name="index"/>, or the first ASUS panel when no
@@ -60,5 +66,9 @@ internal sealed class DisplaySet : IDisposable
         {
             display.Dispose();
         }
+
+        // Any capability string read during this command is persisted here, so
+        // the next run does not pay for it again.
+        _cache?.Flush();
     }
 }

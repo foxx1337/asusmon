@@ -28,12 +28,18 @@ internal sealed class DdcMonitor : IDisposable
 
     private readonly PhysicalMonitorHandle _handle;
 
-    internal DdcMonitor(PhysicalMonitorHandle handle, string description, string deviceName, bool isPrimary)
+    internal DdcMonitor(
+        PhysicalMonitorHandle handle,
+        string description,
+        string deviceName,
+        bool isPrimary,
+        string hardwareId)
     {
         _handle = handle;
         Description = description;
         DeviceName = deviceName;
         IsPrimary = isPrimary;
+        HardwareId = hardwareId;
     }
 
     /// <summary>Driver-supplied description, e.g. <c>ROG SWIFT PG32UCWM</c>.</summary>
@@ -41,6 +47,12 @@ internal sealed class DdcMonitor : IDisposable
 
     /// <summary>GDI device name, e.g. <c>\\.\DISPLAY1</c>.</summary>
     public string DeviceName { get; }
+
+    /// <summary>
+    /// Stable PNP identity of the panel, used to key the capability cache.
+    /// Empty when it could not be determined.
+    /// </summary>
+    public string HardwareId { get; }
 
     public bool IsPrimary { get; }
 

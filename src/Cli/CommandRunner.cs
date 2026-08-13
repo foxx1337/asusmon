@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AsusMon.Ddc;
 using AsusMon.Monitors;
 
 namespace AsusMon.Cli;
@@ -48,6 +49,7 @@ internal sealed class CommandRunner
             "set" => Set(cli),
             "caps" => Caps(cli),
             "vcp" => RawVcp(cli),
+            "cache" => Cache(cli),
             "help" => Help(),
             _ => Unknown(cli.Command),
         };
@@ -67,11 +69,19 @@ internal sealed class CommandRunner
         return ExitCode.UsageError;
     }
 
+    /// <summary>
+    /// Opens the monitors with the capability cache configured for this run.
+    /// Reading a capability string from a panel takes seconds, so every command
+    /// shares the cache unless the user opted out.
+    /// </summary>
+    private static DisplaySet OpenDisplays(CommandLine cli) =>
+        DisplaySet.Open(CapabilityCache.Open(!cli.NoCache, cli.Refresh));
+
     // ---------------------------------------------------------------- list
 
     private int List(CommandLine cli)
     {
-        using DisplaySet displays = DisplaySet.Open();
+        using DisplaySet displays = OpenDisplays(cli);
 
         if (displays.Count == 0)
         {
@@ -148,7 +158,7 @@ internal sealed class CommandRunner
 
     private int Modes(CommandLine cli)
     {
-        using DisplaySet displays = DisplaySet.Open();
+        using DisplaySet displays = OpenDisplays(cli);
         AsusDisplay? display = displays.Select(cli.MonitorIndex);
 
         if (display is null)
@@ -169,7 +179,7 @@ internal sealed class CommandRunner
 
     private int Status(CommandLine cli)
     {
-        using DisplaySet displays = DisplaySet.Open();
+        using DisplaySet displays = OpenDisplays(cli);
 
         if (displays.Count == 0)
         {
@@ -224,7 +234,7 @@ internal sealed class CommandRunner
 
         string token = cli.Args[0];
 
-        using DisplaySet displays = DisplaySet.Open();
+        using DisplaySet displays = OpenDisplays(cli);
         AsusDisplay? display = displays.Select(cli.MonitorIndex);
 
         if (display is null)
@@ -276,7 +286,7 @@ internal sealed class CommandRunner
 
     private int Caps(CommandLine cli)
     {
-        using DisplaySet displays = DisplaySet.Open();
+        using DisplaySet displays = OpenDisplays(cli);
         AsusDisplay? display = displays.Select(cli.MonitorIndex);
 
         if (display is null)
@@ -311,7 +321,7 @@ internal sealed class CommandRunner
             return ExitCode.UsageError;
         }
 
-        using DisplaySet displays = DisplaySet.Open();
+        using DisplaySet displays = OpenDisplays(cli);
         AsusDisplay? display = displays.Select(cli.MonitorIndex);
 
         if (display is null)
@@ -347,6 +357,43 @@ internal sealed class CommandRunner
 
         _out.WriteLine($"0x{code:X2}  current=0x{reading.Current:X4} ({reading.Current})  max=0x{reading.Maximum:X4} ({reading.Maximum})");
         return ExitCode.Success;
+    }
+
+    // --------------------------------------------------------------- cache
+
+    private int Cache(CommandLine cli)
+    {
+        CapabilityCache? cache = CapabilityCache.Open(enabled: true);
+
+        if (cache is null)
+        {
+            _error.WriteLine("error: no writable cache location available.");
+            return ExitCode.DdcFailure;
+        }
+
+        string action = cli.Args.Length > 0 ? cli.Args[0].ToLowerInvariant() : "show";
+
+        switch (action)
+        {
+            case "clear":
+                cache.Clear();
+                cache.Flush();
+                _out.WriteLine($"cache cleared: {cache.FilePath}");
+                return ExitCode.Success;
+
+            case "path":
+                _out.WriteLine(cache.FilePath);
+                return ExitCode.Success;
+
+            case "show":
+                _out.WriteLine(cache.FilePath);
+                _out.WriteLine($"{cache.Count} monitor(s) cached");
+                return ExitCode.Success;
+
+            default:
+                _error.WriteLine($"error: unknown cache action '{action}'. Use show, path or clear.");
+                return ExitCode.UsageError;
+        }
     }
 
     // ------------------------------------------------------------- helpers
@@ -414,6 +461,7 @@ internal sealed class CommandRunner
               set <mode>             Switch GameVisual preset, e.g. 'asusmon set fps'
               caps                   Dump the raw MCCS capability string
               vcp <code> [value]     Read, or write, a raw VCP feature code
+              cache [show|path|clear] Inspect or discard the capability cache
               help                   Show this text
 
             options:
@@ -421,6 +469,8 @@ internal sealed class CommandRunner
                   --json             Emit JSON instead of text
                   --gui              Open the graphical summary instead of running a command
               -c, --console          Force console output even without an attached console
+                  --refresh          Re-read capability strings instead of using the cache
+                  --no-cache         Bypass the capability cache entirely
 
             examples:
               asusmon list
@@ -429,6 +479,10 @@ internal sealed class CommandRunner
               asusmon vcp 0xDC
               asusmon vcp 0x10 40          # brightness to 40
               asusmon status --json
+
+            Capability strings take seconds to read over DDC/CI, so they are cached in
+            %LOCALAPPDATA%\asusmon\capabilities.json. Use --refresh after a monitor
+            firmware update.
 
             Started from Explorer this program shows a WinUI summary window instead.
             """);

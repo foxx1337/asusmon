@@ -60,6 +60,7 @@ internal sealed class DisplaySummary
 internal sealed class AsusDisplay : IDisposable
 {
     private readonly DdcMonitor _monitor;
+    private readonly CapabilityCache? _cache;
     private MonitorCapabilities? _capabilities;
     private bool _capabilitiesLoaded;
     private uint? _vendorCode;
@@ -67,10 +68,11 @@ internal sealed class AsusDisplay : IDisposable
     private bool _hdrActive;
     private bool _hdrLoaded;
 
-    public AsusDisplay(DdcMonitor monitor, int index)
+    public AsusDisplay(DdcMonitor monitor, int index, CapabilityCache? cache = null)
     {
         _monitor = monitor;
         Index = index;
+        _cache = cache;
     }
 
     public int Index { get; }
@@ -81,19 +83,41 @@ internal sealed class AsusDisplay : IDisposable
 
     public bool IsPrimary => _monitor.IsPrimary;
 
+    /// <summary>True when the capability string came from the on-disk cache.</summary>
+    public bool CapabilitiesFromCache { get; private set; }
+
     /// <summary>
-    /// The capability string, fetched once and cached. This is the slowest DDC
-    /// transaction, so it is deliberately lazy.
+    /// The capability string, resolved once per process.
     /// </summary>
+    /// <remarks>
+    /// Reading this from the panel costs several seconds, so the on-disk cache
+    /// is consulted first. The string is fixed in firmware, so a stale entry is
+    /// only possible after a monitor firmware update — <c>--refresh</c> exists
+    /// for that case.
+    /// </remarks>
     public MonitorCapabilities? Capabilities
     {
         get
         {
-            if (!_capabilitiesLoaded)
+            if (_capabilitiesLoaded)
             {
-                _capabilitiesLoaded = true;
-                MonitorCapabilities.TryParse(_monitor.TryGetCapabilities(), out _capabilities);
+                return _capabilities;
             }
+
+            _capabilitiesLoaded = true;
+
+            string hardwareId = _monitor.HardwareId;
+
+            if (_cache is { } cache && cache.TryGet(hardwareId, out string? cached))
+            {
+                CapabilitiesFromCache = true;
+                MonitorCapabilities.TryParse(cached, out _capabilities);
+                return _capabilities;
+            }
+
+            string? raw = _monitor.TryGetCapabilities();
+            MonitorCapabilities.TryParse(raw, out _capabilities);
+            _cache?.Store(hardwareId, Description, raw);
 
             return _capabilities;
         }
@@ -326,14 +350,14 @@ internal static class InputSourceNames
 /// <summary>Opens every DDC/CI-capable monitor attached to the system.</summary>
 internal static class DisplayCatalog
 {
-    public static List<AsusDisplay> Open()
+    public static List<AsusDisplay> Open(CapabilityCache? cache = null)
     {
         List<AsusDisplay> displays = [];
         int index = 0;
 
         foreach (DdcMonitor monitor in MonitorEnumerator.Enumerate())
         {
-            displays.Add(new AsusDisplay(monitor, index++));
+            displays.Add(new AsusDisplay(monitor, index++, cache));
         }
 
         return displays;

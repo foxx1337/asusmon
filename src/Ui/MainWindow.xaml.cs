@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using AsusMon.Ddc;
 using AsusMon.Monitors;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -124,7 +125,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
 
     private static List<DisplaySummary> CollectSummaries()
     {
-        using DisplaySet displays = DisplaySet.Open();
+        using DisplaySet displays = DisplaySet.Open(CapabilityCache.Open(enabled: true));
         List<DisplaySummary> summaries = [];
 
         foreach (AsusDisplay display in displays.All)
@@ -223,7 +224,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
 
         (bool applied, uint readBack) = await Task.Run(() =>
         {
-            using DisplaySet displays = DisplaySet.Open();
+            using DisplaySet displays = DisplaySet.Open(CapabilityCache.Open(enabled: true));
             AsusDisplay? display = displays.Select(vm.MonitorIndex);
 
             if (display is null)

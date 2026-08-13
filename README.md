@@ -46,12 +46,15 @@ asusmon [options] <command> [arguments]
   set <mode>             Switch GameVisual preset, e.g. 'asusmon set fps'
   caps                   Dump the raw MCCS capability string
   vcp <code> [value]     Read, or write, a raw VCP feature code
+  cache [show|path|clear] Inspect or discard the capability cache
   help                   Show this text
 
   -m, --monitor <n>      Target one monitor by index (see 'list')
       --json             Emit JSON instead of text
       --gui              Open the graphical summary instead of running a command
   -c, --console          Force console output even without an attached console
+      --refresh          Re-read capability strings instead of using the cache
+      --no-cache         Bypass the capability cache entirely
 ```
 
 Exit codes: `0` success, `2` bad usage, `3` DDC/CI failure, `4` unknown mode,
@@ -90,6 +93,55 @@ them.
 The bus has no flow control, and back-to-back transactions are silently dropped.
 `DdcMonitor` therefore serialises every transaction behind a global lock with a
 30 ms gap between them — the same thing DisplayWidgetCenter does internally.
+
+## The capability cache
+
+Reading the capability string is by far the most expensive thing this tool does.
+On a PG32UCWM it costs **~5.6 seconds**, which is most of the runtime of any
+command:
+
+| Step | Time |
+| --- | --- |
+| `GetCapabilitiesStringLength` | 5595 ms |
+| `CapabilitiesRequestAndCapabilitiesReply` | 2 ms |
+| A single VCP read or write | ~57 ms |
+
+`GetCapabilitiesStringLength` is not a cheap length query. The driver performs
+the entire transfer in order to answer it, then serves the follow-up reply from
+its own cache — hence the 2 ms. The panel returns 1143 bytes, MCCS moves that in
+~32-byte fragments with a mandated delay between each, so it is roughly 36 round
+trips over a 100 kHz I²C link.
+
+`set` needs the capability string three times over: to derive the model, and
+from it the product line and therefore which VCP code carries the preset; to
+narrow the preset catalog to what the panel actually declares; and to decide the
+sRGB→sRGB Cal remap.
+
+Since the string is fixed in the monitor's firmware, it is cached in
+
+```
+%LOCALAPPDATA%\asusmon\capabilities.json
+```
+
+keyed by the panel's PNP identity (`MONITOR\AUS32D6\{4d36e96e-...}\0009`), which
+comes from the EDID manufacturer and product code and so survives being moved to
+another port. Panels that publish no capability string are recorded as such, so
+that slow failed read is not repeated either.
+
+The effect:
+
+| Command | Cold | Cached |
+| --- | --- | --- |
+| `set fps -m 0` | 6100 ms | **485 ms** |
+| `list` (3 monitors) | 14400 ms | **1700 ms** |
+
+What remains is irreducible: each live VCP read costs ~57 ms plus the 30 ms bus
+pacing, and `ApplyMode` waits 150 ms after a write before reading the value back
+to confirm the panel accepted it.
+
+The file is plain JSON and safe to delete at any time. Use `--refresh` to
+re-read and overwrite it (needed only after a monitor firmware update),
+`--no-cache` to bypass it completely, or `asusmon cache clear` to empty it.
 
 ### VCP codes used
 
@@ -166,11 +218,11 @@ applies in SDR, `0xE2` in HDR. `set` warns when the two do not match.
 ## Building
 
 ```powershell
-cd src\AsusMon
+cd src
 dotnet build -c Release
 ```
 
-Output lands in `bin\Release\net10.0-windows10.0.26100.0\win-x64\`.
+Output lands in `src\bin\Release\net10.0-windows10.0.26100.0\win-x64\`.
 
 To publish a framework-dependent build:
 
@@ -198,12 +250,14 @@ Two things about the project layout are load-bearing and easy to break:
 ## Layout
 
 ```
-src/AsusMon/
+src/
+  AsusMon.csproj
   Program.cs             Entry point; picks the console or GUI face
   LaunchContext.cs       Console-vs-GUI decision
   app.manifest           consoleAllocationPolicy, DPI awareness
   App.xaml[.cs]          WinUI application object (must be in root namespace)
   Ddc/                   Monitor Configuration API interop and DDC plumbing
+    CapabilityCache.cs   %LOCALAPPDATA% cache of capability strings
   Monitors/              VCP codes, GameVisual catalog, high-level facade
   Cli/                   Argument parsing and commands
   Ui/                    WinUI window and view models

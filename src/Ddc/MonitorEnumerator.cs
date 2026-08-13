@@ -54,12 +54,37 @@ internal static unsafe class MonitorEnumerator
                         new PhysicalMonitorHandle(p[i].hPhysicalMonitor),
                         description,
                         deviceName,
-                        isPrimary));
+                        isPrimary,
+                        DescribeMonitorDevice(deviceName, (uint)i)));
                 }
             }
         }
 
         return monitors;
+    }
+
+    /// <summary>
+    /// PNP identity of the panel behind an adapter output, e.g.
+    /// <c>MONITOR\AUS32D6\{4d36e96e-...}\0004</c>.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <c>\\.\DISPLAY1</c>, which is just an ordinal that shifts when
+    /// outputs are rearranged, this encodes the EDID manufacturer and product
+    /// code, so it is stable enough to key a cache on.
+    /// </remarks>
+    private static string DescribeMonitorDevice(string adapterDeviceName, uint index)
+    {
+        if (string.IsNullOrEmpty(adapterDeviceName))
+        {
+            return string.Empty;
+        }
+
+        NativeMethods.DISPLAY_DEVICEW device = default;
+        device.cb = (uint)sizeof(NativeMethods.DISPLAY_DEVICEW);
+
+        return NativeMethods.EnumDisplayDevicesW(adapterDeviceName, index, &device, 0)
+            ? new string(device.DeviceID, 0, 128).TrimEnd('\0')
+            : string.Empty;
     }
 
     private static (string DeviceName, bool IsPrimary) DescribeAdapter(nint hMonitor)

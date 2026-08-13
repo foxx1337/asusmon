@@ -20,6 +20,12 @@ internal sealed class CommandLine
 
     public bool ForceConsole { get; private init; }
 
+    /// <summary>Ignore stored capability strings and re-read them from the panels.</summary>
+    public bool Refresh { get; private init; }
+
+    /// <summary>Bypass the capability cache entirely, neither reading nor writing it.</summary>
+    public bool NoCache { get; private init; }
+
     public bool Help { get; private init; }
 
     public string? Error { get; private init; }
@@ -31,6 +37,8 @@ internal sealed class CommandLine
         bool json = false;
         bool gui = false;
         bool console = false;
+        bool refresh = false;
+        bool noCache = false;
         bool help = false;
 
         for (int i = 0; i < argv.Length; i++)
@@ -62,6 +70,14 @@ internal sealed class CommandLine
                     console = true;
                     break;
 
+                case "--refresh":
+                    refresh = true;
+                    break;
+
+                case "--no-cache":
+                    noCache = true;
+                    break;
+
                 case "-h":
                 case "--help":
                 case "-?":
@@ -83,6 +99,8 @@ internal sealed class CommandLine
             Json = json,
             ForceGui = gui,
             ForceConsole = console,
+            Refresh = refresh,
+            NoCache = noCache,
             Help = help,
         };
     }
