@@ -79,6 +79,23 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("user32.dll")]
     internal static partial uint GetDpiForWindow(nint hwnd);
 
+    /// <summary>
+    /// Pulls an icon group out of a PE image. Used to hand the window the icon
+    /// already embedded in this executable by <c>ApplicationIcon</c>, which
+    /// avoids shipping a loose .ico beside the binary.
+    /// </summary>
+    [LibraryImport("shell32.dll", EntryPoint = "ExtractIconExW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial uint ExtractIconExW(
+        string lpszFile,
+        int nIconIndex,
+        nint* phiconLarge,
+        nint* phiconSmall,
+        uint nIcons);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DestroyIcon(nint hIcon);
+
     [LibraryImport("kernel32.dll", SetLastError = true)]
     internal static partial nint GetStdHandle(int nStdHandle);
 

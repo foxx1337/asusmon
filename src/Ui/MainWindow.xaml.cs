@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using AsusMon.Ddc;
 using AsusMon.Monitors;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -30,6 +31,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         Title = "asusmon";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        ApplyWindowIcon();
         ResizeForDpi(620, 780);
 
         MonitorList.ItemsSource = Monitors;
@@ -38,6 +40,44 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>
+    /// Gives the window and its taskbar button the executable's own icon.
+    /// </summary>
+    /// <remarks>
+    /// <c>AppWindow.SetIcon(string)</c> would need a loose .ico beside the
+    /// binary, so the icon is instead extracted from this image's own
+    /// resources — the one <c>ApplicationIcon</c> embedded at build time.
+    /// </remarks>
+    private unsafe void ApplyWindowIcon()
+    {
+        string? image = Environment.ProcessPath;
+
+        if (string.IsNullOrEmpty(image))
+        {
+            return;
+        }
+
+        nint large = 0;
+        nint small = 0;
+
+        if (Ddc.NativeMethods.ExtractIconExW(image, 0, &large, &small, 1) == 0)
+        {
+            return;
+        }
+
+        // The window keeps the large icon and Windows scales it down for the
+        // title bar, so the small one is surplus.
+        if (small != 0)
+        {
+            Ddc.NativeMethods.DestroyIcon(small);
+        }
+
+        if (large != 0)
+        {
+            AppWindow.SetIcon(Win32Interop.GetIconIdFromIcon(large));
+        }
+    }
 
     /// <summary>
     /// Sizes the window in effective (DPI-independent) pixels. AppWindow works
