@@ -192,8 +192,6 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
             IsPopulating = true,
         };
 
-        int selected = -1;
-
         foreach (GameVisualMode mode in summary.AvailableModes)
         {
             // A preset only applies while the panel is in the matching pipeline:
@@ -208,32 +206,57 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                     : mode.Name,
                 Mode = mode,
             });
+        }
+
+        ApplyState(vm, summary);
+        vm.IsPopulating = false;
+
+        return vm;
+    }
+
+    /// <summary>
+    /// Copies the mutable part of a summary onto an existing card. The preset
+    /// list is fixed for a given panel and pipeline, but everything it governs —
+    /// selection, levels and the settings rows — is re-read.
+    /// </summary>
+    private static void ApplyState(MonitorViewModel vm, DisplaySummary summary)
+    {
+        int selected = -1;
+
+        for (int i = 0; i < vm.Modes.Count; i++)
+        {
+            GameVisualMode mode = vm.Modes[i].Mode;
 
             if (summary.CurrentMode is { } current && current.Id == mode.Id && current.Code == mode.Code)
             {
-                selected = vm.Modes.Count - 1;
+                selected = i;
+                break;
             }
         }
 
         vm.SelectedModeIndex = selected;
-        vm.IsPopulating = false;
 
+        vm.Settings.Clear();
         vm.Settings.Add(new SettingViewModel("Pipeline", summary.IsHdrActive ? "HDR" : "SDR"));
         vm.Settings.Add(new SettingViewModel("Model", summary.Model ?? "unknown"));
         vm.Settings.Add(new SettingViewModel("Family", summary.ProductLine.ToString()));
         vm.Settings.Add(new SettingViewModel("Input", summary.InputSourceName ?? "n/a"));
 
+        // The applied value is set first: the slider echoes programmatic changes
+        // back through ValueChanged, and that is what suppresses the write.
+        vm.HasBrightness = summary.Brightness is not null;
+
         if (summary.Brightness is { } brightness)
         {
-            vm.HasBrightness = true;
             vm.BrightnessMaximum = brightness.Maximum;
             vm.AppliedBrightness = brightness.Current;
             vm.Brightness = brightness.Current;
         }
 
+        vm.HasContrast = summary.Contrast is not null;
+
         if (summary.Contrast is { } contrast)
         {
-            vm.HasContrast = true;
             vm.ContrastMaximum = contrast.Maximum;
             vm.AppliedContrast = contrast.Current;
             vm.Contrast = contrast.Current;
@@ -248,8 +271,6 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         {
             vm.Settings.Add(new SettingViewModel("Vendor id", $"{vendor} (0x{vendor:X2})"));
         }
-
-        return vm;
     }
 
     private static void AddIfPresent(MonitorViewModel vm, string label, Reading? reading)
@@ -298,7 +319,47 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
             ? $"GameVisual set to {selection.Mode.Name}"
             : $"Monitor rejected {selection.Mode.Name} (reported 0x{readBack:X2})";
 
+        // A preset carries its own brightness, contrast and sharpness, so the
+        // card is now stale. Only this monitor is re-read; the others are
+        // untouched and a full refresh would cost a DDC/CI round trip each.
+        if (applied)
+        {
+            CancelPendingLevels(vm.MonitorIndex);
+
+            DisplaySummary? fresh = await Task.Run(() =>
+            {
+                using DisplaySet displays = DisplaySet.Open(CapabilityCache.Open(enabled: true));
+                return displays.Select(vm.MonitorIndex)?.Summarize();
+            });
+
+            if (fresh is not null)
+            {
+                vm.IsPopulating = true;
+                ApplyState(vm, fresh);
+                vm.IsPopulating = false;
+            }
+        }
+
         IsIdle = true;
+    }
+
+    /// <summary>
+    /// Drops slider writes still waiting out their debounce for a monitor,
+    /// so a queued value cannot land after the panel has moved on.
+    /// </summary>
+    private void CancelPendingLevels(int monitorIndex)
+    {
+        foreach ((int Monitor, byte Code) key in _pendingLevels.Keys.ToList())
+        {
+            if (key.Monitor != monitorIndex)
+            {
+                continue;
+            }
+
+            _pendingLevels[key].Cancel();
+            _pendingLevels[key].Dispose();
+            _pendingLevels.Remove(key);
+        }
     }
 
     private async void OnBrightnessChanged(object sender, RangeBaseValueChangedEventArgs e) =>

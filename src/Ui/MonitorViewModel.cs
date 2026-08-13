@@ -45,6 +45,10 @@ public sealed class MonitorViewModel : INotifyPropertyChanged
     private int _selectedModeIndex = -1;
     private double _brightness;
     private double _contrast;
+    private bool _hasBrightness;
+    private bool _hasContrast;
+    private double _brightnessMaximum = 100;
+    private double _contrastMaximum = 100;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -81,17 +85,76 @@ public sealed class MonitorViewModel : INotifyPropertyChanged
 
     // ------------------------------------------------------- level sliders
 
-    public bool HasBrightness { get; set; }
+    // A preset switch can change both whether a level is adjustable and its
+    // range, so these notify rather than binding once.
 
-    public bool HasContrast { get; set; }
+    public bool HasBrightness
+    {
+        get => _hasBrightness;
+        set
+        {
+            if (_hasBrightness == value)
+            {
+                return;
+            }
+
+            _hasBrightness = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BrightnessVisibility));
+        }
+    }
+
+    public bool HasContrast
+    {
+        get => _hasContrast;
+        set
+        {
+            if (_hasContrast == value)
+            {
+                return;
+            }
+
+            _hasContrast = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ContrastVisibility));
+        }
+    }
 
     public Visibility BrightnessVisibility => HasBrightness ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility ContrastVisibility => HasContrast ? Visibility.Visible : Visibility.Collapsed;
 
-    public double BrightnessMaximum { get; set; } = 100;
+    public double BrightnessMaximum
+    {
+        get => _brightnessMaximum;
+        set
+        {
+            if (Math.Abs(_brightnessMaximum - value) < 0.5)
+            {
+                return;
+            }
 
-    public double ContrastMaximum { get; set; } = 100;
+            _brightnessMaximum = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BrightnessText));
+        }
+    }
+
+    public double ContrastMaximum
+    {
+        get => _contrastMaximum;
+        set
+        {
+            if (Math.Abs(_contrastMaximum - value) < 0.5)
+            {
+                return;
+            }
+
+            _contrastMaximum = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ContrastText));
+        }
+    }
 
     public double Brightness
     {

@@ -83,7 +83,7 @@
                                     </StackPanel>
 
                                     <!-- Brightness / contrast -->
-                                    <StackPanel Spacing="2" Visibility="{x:Bind BrightnessVisibility}">
+                                    <StackPanel Spacing="2" Visibility="{x:Bind BrightnessVisibility, Mode=OneWay}">
                                         <Grid ColumnDefinitions="*,Auto">
                                             <TextBlock Text="Brightness"
                                                        Style="{StaticResource CaptionTextBlockStyle}"
@@ -94,14 +94,14 @@
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </Grid>
                                         <Slider Minimum="0"
-                                                Maximum="{x:Bind BrightnessMaximum}"
+                                                Maximum="{x:Bind BrightnessMaximum, Mode=OneWay}"
                                                 StepFrequency="1"
                                                 Value="{x:Bind Brightness, Mode=TwoWay}"
                                                 ValueChanged="OnBrightnessChanged"
                                                 Tag="{x:Bind}" />
                                     </StackPanel>
 
-                                    <StackPanel Spacing="2" Visibility="{x:Bind ContrastVisibility}">
+                                    <StackPanel Spacing="2" Visibility="{x:Bind ContrastVisibility, Mode=OneWay}">
                                         <Grid ColumnDefinitions="*,Auto">
                                             <TextBlock Text="Contrast"
                                                        Style="{StaticResource CaptionTextBlockStyle}"
@@ -112,7 +112,7 @@
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </Grid>
                                         <Slider Minimum="0"
-                                                Maximum="{x:Bind ContrastMaximum}"
+                                                Maximum="{x:Bind ContrastMaximum, Mode=OneWay}"
                                                 StepFrequency="1"
                                                 Value="{x:Bind Contrast, Mode=TwoWay}"
                                                 ValueChanged="OnContrastChanged"
