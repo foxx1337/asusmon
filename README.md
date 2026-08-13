@@ -52,6 +52,7 @@ asusmon [options] <command> [arguments]
   list                   Monitors plus every GameVisual preset they advertise
   modes                  Bare list of preset ids, one per line (script friendly)
   set <setting> [value]  Change a setting, see below
+  osd [action] [count]   Press a front panel control, see below
   caps                   Dump the raw MCCS capability string
   vcp <code> [value]     Read, or write, a raw VCP feature code
   cache [show|path|clear] Inspect or discard the capability cache
@@ -90,6 +91,40 @@ of being treated as a failure.
 Exit codes: `0` success, `1` bad usage, `2` no monitor matched, `3` DDC/CI
 failure, `4` unknown mode or setting value.
 
+### OSD control
+
+`osd` presses the monitor's own controls. Everything the front panel does —
+joystick, its click, the back key and both shortcut buttons — is carried by a
+single write-only register, VCP `0xEB`, one write per press.
+
+| Action | Value | Physical control | Aliases |
+| --- | --- | --- | --- |
+| `close` | `0x00` | dismisses the OSD | `dismiss`, `esc` |
+| `show` | `0x01` | opens the OSD | `open`, `menu` |
+| `up` | `0x02` | joystick up | `u` |
+| `down` | `0x03` | joystick down | `d` |
+| `right` | `0x04` | joystick right | `r` |
+| `left` | `0x05` | joystick left | `l` |
+| `enter` | `0x06` | **joystick press** | `press`, `select`, `ok` |
+| `back` | `0x07` | back key | `cancel` |
+| `input` | `0x08` | input select key | `source`, `inputselect` |
+| `quickfit` | `0x09` | QuickFit key | `qf` |
+| `button1` | `0x0A` | **shortcut button 1** | `shortcut1`, `key1`, `b1` |
+| `button2` | `0x0B` | **shortcut button 2** | `shortcut2`, `key2`, `b2` |
+| `selfcal` | `0x0C` | self calibration (ProArt) | `selfcalibration` |
+
+`asusmon osd` on its own lists the actions. One action followed by a number
+repeats it; several actions are played in order. Actions the panel does not
+declare in its capability string are rejected before anything is written — a
+PG32UCWM offers everything above except `quickfit` and `selfcal`.
+
+The two buttons fire whatever function the OSD has assigned to them (GamePlus,
+GameVisual, Shadow Boost, and so on, per `ShortcutType` in the ASUS app). These
+press the key; they do not choose the function.
+
+Nothing here reads back: the register has no state, so a press either reaches
+the panel or the DDC/CI handshake fails.
+
 ### Examples
 
 ```powershell
@@ -101,6 +136,10 @@ asusmon set contrast +5       # relative
 asusmon set shadowboost level2
 asusmon set sb dynamic        # same thing, short form
 asusmon modes                 # ids only, for scripting
+asusmon osd show              # open the OSD
+asusmon osd down 3            # three joystick presses down
+asusmon osd show down enter   # a sequence, played in order
+asusmon osd button2           # press shortcut button 2
 asusmon vcp 0x10 40           # brightness to 40, the raw way
 asusmon status --json         # machine readable
 ```
@@ -190,6 +229,7 @@ re-read and overwrite it (needed only after a monitor firmware update),
 | `0xE2` | **GameVisual preset** (HDR / Dolby Vision) |
 | `0xE3` | GameVisual preset on ProArt panels |
 | `0xE5` | **Shadow Boost** |
+| `0xEB` | **OSD instruction** (front panel keys) |
 | `0xEF` | ASUS vendor identity probe |
 
 `0xEF` is how the app decides a panel is genuinely an ASUS display. Only a
@@ -269,12 +309,14 @@ Codes below `0xE0` are VESA MCCS standard, so brightness at `0x10` and contrast
 at `0x12` are documented and vendor-neutral; Windows' own `GetMonitorBrightness`
 is a wrapper over `0x10`.
 
-The vendor range has no such backing. `0xDC`, `0xE2`, `0xE5` and `0xEF` were
-taken from DisplayWidgetCenter's own `VCPAPI` class, which ships unobfuscated
-and passes each code as a literal in a named method (`SetShadowBoost` →
-`SetVCPFeatureInternal(hMonitor, 229u, ...)`), cross-checked against its
+The vendor range has no such backing. `0xDC`, `0xE2`, `0xE5`, `0xEB` and `0xEF`
+were taken from DisplayWidgetCenter's own `VCPAPI` class, which ships
+unobfuscated and passes each code as a literal in a named method
+(`SetShadowBoost` → `SetVCPFeatureInternal(hMonitor, 229u, ...)`, `SetEzOSD` →
+`SetVCPFeatureInternalForEzOSD(hMonitor, 235u, ...)`), cross-checked against its
 `AirVisionVCPCode` enum and its retained log strings, then confirmed against the
-live panel by writing each value and reading it back.
+live panel by writing each value and reading it back. The OSD action ordinals
+come from the `VCPAPI.OSDOperate` enum in the same class.
 
 ## Requirements
 

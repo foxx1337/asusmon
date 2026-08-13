@@ -28,6 +28,7 @@ internal static class Vcp
     public const byte GameVisualProArt = 0xE3;
     public const byte ShadowBoost = 0xE5;
     public const byte BlueLightFilter = 0xE6;
+    public const byte OsdInstruction = 0xEB;
     public const byte VendorId = 0xEF;
     public const byte AuraSync = 0xF2;
     public const byte Kvm = 0xF3;
@@ -80,6 +81,42 @@ internal static class ShadowBoost
 
     public static EnumOption? Resolve(string token) =>
         Options.FirstOrDefault(o => o.Matches(token));
+}
+
+/// <summary>
+/// OSD Instruction, VCP 0xEB. A write-only command register: the panel acts on
+/// each write as though the matching front-panel control had been pressed, so
+/// there is nothing to read back. Names and ordinals come from
+/// <c>VCPAPI.OSDOperate</c>, which <c>VCPAPI.SetEzOSD</c> writes to 235.
+/// </summary>
+internal static class Osd
+{
+    public const byte Code = Vcp.OsdInstruction;
+
+    /// <summary>
+    /// Buttons 1 and 2 fire whatever the OSD has assigned to them (GamePlus,
+    /// GameVisual, Shadow Boost and so on); these press the key, they do not
+    /// choose the function.
+    /// </summary>
+    public static readonly EnumOption[] Actions =
+    [
+        new("close",    "Close",             0x00, ["dismiss", "esc"]),
+        new("show",     "Show",              0x01, ["open", "menu"]),
+        new("up",       "Up",                0x02, ["u"]),
+        new("down",     "Down",              0x03, ["d"]),
+        new("right",    "Right",             0x04, ["r"]),
+        new("left",     "Left",              0x05, ["l"]),
+        new("enter",    "Enter",             0x06, ["press", "select", "ok"]),
+        new("back",     "Back",              0x07, ["cancel"]),
+        new("input",    "Input Select",      0x08, ["source", "inputselect"]),
+        new("quickfit", "QuickFit",          0x09, ["qf"]),
+        new("button1",  "Shortcut 1",        0x0A, ["shortcut1", "key1", "b1"]),
+        new("button2",  "Shortcut 2",        0x0B, ["shortcut2", "key2", "b2"]),
+        new("selfcal",  "Self Calibration",  0x0C, ["selfcalibration"]),
+    ];
+
+    public static EnumOption? Resolve(string token) =>
+        Actions.FirstOrDefault(a => a.Matches(token));
 }
 
 /// <summary>A continuous 0..max VCP feature that <c>set</c> can drive directly.</summary>

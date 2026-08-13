@@ -47,6 +47,7 @@ internal sealed class CommandRunner
             "modes" => Modes(cli),
             "status" or "get" => Status(cli),
             "set" => Set(cli),
+            "osd" => RunOsd(cli),
             "caps" => Caps(cli),
             "vcp" => RawVcp(cli),
             "cache" => Cache(cli),
@@ -449,6 +450,132 @@ internal sealed class CommandRunner
         return ExitCode.Success;
     }
 
+    // ----------------------------------------------------------------- osd
+
+    /// <summary>
+    /// Presses front-panel controls through VCP 0xEB. Accepts either a single
+    /// action with a repeat count, or a sequence of actions to play in order.
+    /// </summary>
+    private int RunOsd(CommandLine cli)
+    {
+        if (cli.Args.Length == 0)
+        {
+            PrintOsdActions();
+            return ExitCode.Success;
+        }
+
+        // 'osd down 3' repeats; anything else is a sequence of presses.
+        int repeat = 1;
+        string[] tokens = cli.Args;
+
+        if (tokens.Length == 2 && int.TryParse(tokens[1], out int count))
+        {
+            if (count < 1 || count > 50)
+            {
+                _error.WriteLine($"error: repeat count must be between 1 and 50, got {count}.");
+                return ExitCode.UsageError;
+            }
+
+            repeat = count;
+            tokens = [tokens[0]];
+        }
+
+        List<EnumOption> sequence = [];
+
+        foreach (string token in tokens)
+        {
+            if (Osd.Resolve(token) is not { } action)
+            {
+                _error.WriteLine($"error: '{token}' is not an OSD action.");
+                _error.WriteLine($"       available: {string.Join(", ", Osd.Actions.Select(a => a.Id))}");
+                return ExitCode.UsageError;
+            }
+
+            sequence.Add(action);
+        }
+
+        using DisplaySet displays = OpenDisplays(cli);
+        AsusDisplay? display = displays.Select(cli.MonitorIndex);
+
+        if (display is null)
+        {
+            _error.WriteLine("error: no matching monitor.");
+            return ExitCode.NoMonitor;
+        }
+
+        string name = display.Model ?? display.Description;
+
+        if (!display.IsAsus)
+        {
+            _error.WriteLine($"error: {display.Description} is not an ASUS display; VCP 0x{Osd.Code:X2} is vendor specific.");
+            return ExitCode.UnknownMode;
+        }
+
+        IReadOnlyList<uint>? declared = display.Capabilities?.ValuesFor(Osd.Code);
+
+        if (declared is { Count: > 0 })
+        {
+            foreach (EnumOption action in sequence)
+            {
+                if (declared.Contains(action.Value))
+                {
+                    continue;
+                }
+
+                _error.WriteLine($"error: {name} does not advertise the '{action.Id}' OSD action.");
+                _error.WriteLine(
+                    "       declared: " +
+                    string.Join(", ", declared.Select(v =>
+                        Osd.Actions.FirstOrDefault(a => a.Value == v)?.Id ?? $"0x{v:X2}")));
+                return ExitCode.UnknownMode;
+            }
+        }
+
+        // Write-only feature: there is no state to read back, so a failed
+        // handshake is the only error the panel can report.
+        foreach (EnumOption action in sequence)
+        {
+            for (int i = 0; i < repeat; i++)
+            {
+                if (!display.Write(Osd.Code, action.Value))
+                {
+                    _error.WriteLine($"error: the monitor did not accept 0x{action.Value:X2} on 0x{Osd.Code:X2}.");
+                    return ExitCode.DdcFailure;
+                }
+            }
+        }
+
+        string played = string.Join(", ", sequence.Select(a => a.Name));
+        _out.WriteLine(repeat > 1
+            ? $"{name}: OSD -> {played} x{repeat}"
+            : $"{name}: OSD -> {played}");
+
+        return ExitCode.Success;
+    }
+
+    /// <summary>Lists the OSD actions, marking the ones this panel declares.</summary>
+    private void PrintOsdActions()
+    {
+        _out.WriteLine($"OSD actions (VCP 0x{Osd.Code:X2}), usage: asusmon osd <action> [count]");
+        _out.WriteLine();
+
+        int width = Osd.Actions.Max(a => a.Id.Length);
+
+        foreach (EnumOption action in Osd.Actions)
+        {
+            string aliases = action.Aliases is { Length: > 0 } list
+                ? $"  also: {string.Join(", ", list)}"
+                : string.Empty;
+
+            _out.WriteLine($"  {action.Id.PadRight(width)}  0x{action.Value:X2}  {action.Name,-18}{aliases}");
+        }
+
+        _out.WriteLine();
+        _out.WriteLine("  Buttons 1 and 2 press the panel's shortcut keys, whatever the OSD has");
+        _out.WriteLine("  assigned to them. Not every panel offers every action; run 'asusmon caps'");
+        _out.WriteLine($"  and look at the 0x{Osd.Code:X2} group to see which ones yours declares.");
+    }
+
     // ---------------------------------------------------------------- caps
 
     private int Caps(CommandLine cli)
@@ -626,6 +753,7 @@ internal sealed class CommandRunner
               list                   Monitors plus every GameVisual preset they advertise
               modes                  Bare list of preset ids, one per line (script friendly)
               set <setting> [value]  Change a setting, see 'settings' below
+              osd [action] [count]   Press a front panel control, see 'osd actions' below
               caps                   Dump the raw MCCS capability string
               vcp <code> [value]     Read, or write, a raw VCP feature code
               cache [show|path|clear] Inspect or discard the capability cache
@@ -641,6 +769,7 @@ internal sealed class CommandRunner
             """);
 
         PrintSettings();
+        PrintOsdSummary();
 
         _out.WriteLine("""
 
@@ -652,6 +781,10 @@ internal sealed class CommandRunner
               asusmon set contrast +5
               asusmon set shadowboost level2
               asusmon set sb dynamic
+              asusmon osd show
+              asusmon osd down 3           # three presses of the joystick
+              asusmon osd show down enter  # a sequence, played in order
+              asusmon osd button2
               asusmon vcp 0xDC
               asusmon vcp 0x10 40          # brightness to 40
               asusmon status --json
@@ -662,6 +795,33 @@ internal sealed class CommandRunner
 
             Started from Explorer this program shows a WinUI summary window instead.
             """);
+    }
+
+    /// <summary>
+    /// Documents the <c>osd</c> verb inside the main help. Generated from the
+    /// same table the parser uses.
+    /// </summary>
+    private void PrintOsdSummary()
+    {
+        _out.WriteLine();
+        _out.WriteLine($"osd actions (VCP 0x{Osd.Code:X2}, one write per press):");
+
+        int width = Osd.Actions.Max(a => a.Id.Length);
+
+        foreach (EnumOption action in Osd.Actions)
+        {
+            string aliases = action.Aliases is { Length: > 0 } list
+                ? $"  also: {string.Join(", ", list)}"
+                : string.Empty;
+
+            _out.WriteLine($"  {action.Id.PadRight(width)}  {action.Name,-18}{aliases}");
+        }
+
+        _out.WriteLine();
+        _out.WriteLine("  'osd <action> <count>' repeats one action; several actions are played");
+        _out.WriteLine("  in order. Run 'asusmon osd' alone to list them with their raw values.");
+        _out.WriteLine("  button1 and button2 press the panel's shortcut keys, firing whatever");
+        _out.WriteLine("  function the OSD has assigned to them.");
     }
 
     /// <summary>
