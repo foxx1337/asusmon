@@ -228,11 +228,18 @@ internal sealed class CommandRunner
     {
         if (cli.Args.Length == 0)
         {
-            _error.WriteLine("error: 'set' requires a mode. Run 'asusmon list' to see available modes.");
+            _error.WriteLine(
+                "error: 'set' requires a mode or a level. " +
+                "Run 'asusmon list' to see available modes, or use 'set brightness <0-100>'.");
             return ExitCode.UsageError;
         }
 
         string token = cli.Args[0];
+
+        if (LevelFeature.Resolve(token) is { } feature)
+        {
+            return SetLevel(cli, feature);
+        }
 
         using DisplaySet displays = OpenDisplays(cli);
         AsusDisplay? display = displays.Select(cli.MonitorIndex);
@@ -279,6 +286,71 @@ internal sealed class CommandRunner
         }
 
         _out.WriteLine($"{display.Model ?? display.Description}: GameVisual -> {mode.Name}");
+        return ExitCode.Success;
+    }
+
+    /// <summary>
+    /// Drives a continuous feature, e.g. <c>set brightness 40</c>. A leading
+    /// sign makes the value relative to the current reading, so
+    /// <c>set brightness +10</c> works as a shortcut key would.
+    /// </summary>
+    private int SetLevel(CommandLine cli, LevelFeature feature)
+    {
+        if (cli.Args.Length < 2)
+        {
+            _error.WriteLine($"error: 'set {feature.Id}' requires a value, e.g. 'asusmon set {feature.Id} 40'.");
+            return ExitCode.UsageError;
+        }
+
+        string valueToken = cli.Args[1];
+        bool relative = valueToken.StartsWith('+') || valueToken.StartsWith('-');
+
+        if (!int.TryParse(valueToken, out int requested))
+        {
+            _error.WriteLine($"error: '{valueToken}' is not a valid value. Use 0-100, or a relative +10 / -10.");
+            return ExitCode.UsageError;
+        }
+
+        using DisplaySet displays = OpenDisplays(cli);
+        AsusDisplay? display = displays.Select(cli.MonitorIndex);
+
+        if (display is null)
+        {
+            _error.WriteLine("error: no matching monitor.");
+            return ExitCode.NoMonitor;
+        }
+
+        if (display.Read(feature.Code) is not { } current)
+        {
+            _error.WriteLine(
+                $"error: {display.Model ?? display.Description} does not report {feature.Id} (VCP 0x{feature.Code:X2}).");
+            return ExitCode.DdcFailure;
+        }
+
+        int max = (int)current.Maximum;
+        int target = relative ? (int)current.Current + requested : requested;
+        int clamped = Math.Clamp(target, 0, max);
+
+        if (clamped != target)
+        {
+            _error.WriteLine($"warning: {target} is outside 0-{max}; clamped to {clamped}.");
+        }
+
+        if (!display.ApplyLevel(feature.Code, (uint)clamped, out uint readBack))
+        {
+            if (readBack == uint.MaxValue)
+            {
+                _error.WriteLine($"error: the monitor did not accept a write to 0x{feature.Code:X2}.");
+                return ExitCode.DdcFailure;
+            }
+
+            // Some panels quantize to their own step size; that is not a failure.
+            _out.WriteLine(
+                $"{display.Model ?? display.Description}: {feature.Name} -> {clamped}, monitor settled on {readBack}");
+            return ExitCode.Success;
+        }
+
+        _out.WriteLine($"{display.Model ?? display.Description}: {feature.Name} -> {clamped} / {max}");
         return ExitCode.Success;
     }
 
@@ -459,6 +531,8 @@ internal sealed class CommandRunner
               list                   Monitors plus every GameVisual preset they advertise
               modes                  Bare list of preset ids, one per line (script friendly)
               set <mode>             Switch GameVisual preset, e.g. 'asusmon set fps'
+              set brightness <n>     Set brightness, absolute (40) or relative (+10, -10)
+              set contrast <n>       Set contrast, absolute or relative
               caps                   Dump the raw MCCS capability string
               vcp <code> [value]     Read, or write, a raw VCP feature code
               cache [show|path|clear] Inspect or discard the capability cache
@@ -476,6 +550,8 @@ internal sealed class CommandRunner
               asusmon list
               asusmon set fps
               asusmon set racing --monitor 0
+              asusmon set brightness 40
+              asusmon set contrast +5
               asusmon vcp 0xDC
               asusmon vcp 0x10 40          # brightness to 40
               asusmon status --json

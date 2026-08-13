@@ -6,6 +6,7 @@ using AsusMon.Ddc;
 using AsusMon.Monitors;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Windows.Graphics;
 
 namespace AsusMon.Ui;
@@ -17,6 +18,9 @@ namespace AsusMon.Ui;
 public sealed partial class MainWindow : Window, INotifyPropertyChanged
 {
     private bool _isIdle;
+
+    /// <summary>Debounce tokens, one per monitor and feature.</summary>
+    private readonly Dictionary<(int Monitor, byte Code), CancellationTokenSource> _pendingLevels = [];
 
     public MainWindow()
     {
@@ -179,8 +183,22 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         vm.Settings.Add(new SettingViewModel("Family", summary.ProductLine.ToString()));
         vm.Settings.Add(new SettingViewModel("Input", summary.InputSourceName ?? "n/a"));
 
-        AddIfPresent(vm, "Brightness", summary.Brightness);
-        AddIfPresent(vm, "Contrast", summary.Contrast);
+        if (summary.Brightness is { } brightness)
+        {
+            vm.HasBrightness = true;
+            vm.BrightnessMaximum = brightness.Maximum;
+            vm.AppliedBrightness = brightness.Current;
+            vm.Brightness = brightness.Current;
+        }
+
+        if (summary.Contrast is { } contrast)
+        {
+            vm.HasContrast = true;
+            vm.ContrastMaximum = contrast.Maximum;
+            vm.AppliedContrast = contrast.Current;
+            vm.Contrast = contrast.Current;
+        }
+
         AddIfPresent(vm, "Sharpness", summary.Sharpness);
         AddIfPresent(vm, "Volume", summary.Volume);
 
@@ -241,5 +259,100 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
             : $"Monitor rejected {selection.Mode.Name} (reported 0x{readBack:X2})";
 
         IsIdle = true;
+    }
+
+    private async void OnBrightnessChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        await OnLevelChangedAsync(sender, e, LevelFeature.Brightness);
+
+    private async void OnContrastChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        await OnLevelChangedAsync(sender, e, LevelFeature.Contrast);
+
+    /// <summary>
+    /// Pushes a slider value to the monitor, debounced. A DDC/CI write costs
+    /// tens of milliseconds and the channel has no flow control, so writing on
+    /// every tick of a drag would flood it; only the value the slider rests on
+    /// is sent.
+    /// </summary>
+    private async Task OnLevelChangedAsync(object sender, RangeBaseValueChangedEventArgs e, LevelFeature feature)
+    {
+        if (sender is not Slider { Tag: MonitorViewModel vm })
+        {
+            return;
+        }
+
+        bool isBrightness = feature.Code == Vcp.Brightness;
+        uint applied = isBrightness ? vm.AppliedBrightness : vm.AppliedContrast;
+
+        // Template realization raises ValueChanged for the loaded value; that
+        // must not be echoed back to the panel.
+        if ((uint)Math.Round(e.NewValue) == applied)
+        {
+            return;
+        }
+
+        (int, byte) key = (vm.MonitorIndex, feature.Code);
+
+        if (_pendingLevels.TryGetValue(key, out CancellationTokenSource? previous))
+        {
+            previous.Cancel();
+            previous.Dispose();
+        }
+
+        CancellationTokenSource cts = new();
+        _pendingLevels[key] = cts;
+
+        try
+        {
+            await Task.Delay(200, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        // Two-way binding keeps the view model current, so read the value the
+        // slider actually came to rest on rather than the one that queued us.
+        uint target = (uint)Math.Round(isBrightness ? vm.Brightness : vm.Contrast);
+
+        StatusText.Text = $"Setting {feature.Name.ToLowerInvariant()} to {target}...";
+
+        uint readBack = await Task.Run(() =>
+        {
+            using DisplaySet displays = DisplaySet.Open(CapabilityCache.Open(enabled: true));
+            AsusDisplay? display = displays.Select(vm.MonitorIndex);
+
+            if (display is null)
+            {
+                return uint.MaxValue;
+            }
+
+            display.ApplyLevel(feature.Code, target, out uint value);
+            return value;
+        });
+
+        if (_pendingLevels.TryGetValue(key, out CancellationTokenSource? current) && current == cts)
+        {
+            _pendingLevels.Remove(key);
+            cts.Dispose();
+        }
+
+        if (readBack == uint.MaxValue)
+        {
+            StatusText.Text = $"Monitor did not accept {feature.Name.ToLowerInvariant()} {target}";
+            return;
+        }
+
+        if (isBrightness)
+        {
+            vm.AppliedBrightness = readBack;
+            vm.Brightness = readBack;
+        }
+        else
+        {
+            vm.AppliedContrast = readBack;
+            vm.Contrast = readBack;
+        }
+
+        StatusText.Text = $"{feature.Name} set to {readBack}";
     }
 }

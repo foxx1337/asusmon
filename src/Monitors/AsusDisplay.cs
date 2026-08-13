@@ -258,6 +258,25 @@ internal sealed class AsusDisplay : IDisposable
         return readBack == value;
     }
 
+    /// <summary>
+    /// Writes a continuous feature (brightness, contrast, ...) and reads it
+    /// back. Panels settle faster on these than on preset switches, but the
+    /// read-back is still the only confirmation DDC/CI offers.
+    /// </summary>
+    public bool ApplyLevel(byte code, uint value, out uint readBack)
+    {
+        if (!Write(code, value))
+        {
+            readBack = uint.MaxValue;
+            return false;
+        }
+
+        Thread.Sleep(60);
+
+        readBack = Read(code)?.Current ?? uint.MaxValue;
+        return readBack == value;
+    }
+
     public DisplaySummary Summarize(bool includeCapabilities = false)
     {
         uint? vendor = ReadVendorCode();

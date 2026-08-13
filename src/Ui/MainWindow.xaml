@@ -82,6 +82,43 @@
                                                   Tag="{x:Bind}" />
                                     </StackPanel>
 
+                                    <!-- Brightness / contrast -->
+                                    <StackPanel Spacing="2" Visibility="{x:Bind BrightnessVisibility}">
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Brightness"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{x:Bind BrightnessText, Mode=OneWay}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </Grid>
+                                        <Slider Minimum="0"
+                                                Maximum="{x:Bind BrightnessMaximum}"
+                                                StepFrequency="1"
+                                                Value="{x:Bind Brightness, Mode=TwoWay}"
+                                                ValueChanged="OnBrightnessChanged"
+                                                Tag="{x:Bind}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="2" Visibility="{x:Bind ContrastVisibility}">
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Contrast"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{x:Bind ContrastText, Mode=OneWay}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </Grid>
+                                        <Slider Minimum="0"
+                                                Maximum="{x:Bind ContrastMaximum}"
+                                                StepFrequency="1"
+                                                Value="{x:Bind Contrast, Mode=TwoWay}"
+                                                ValueChanged="OnContrastChanged"
+                                                Tag="{x:Bind}" />
+                                    </StackPanel>
+
                                     <!-- Settings grid -->
                                     <ItemsControl ItemsSource="{x:Bind Settings}">
                                         <ItemsControl.ItemsPanel>

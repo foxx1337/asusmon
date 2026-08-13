@@ -43,6 +43,8 @@ public sealed class ModeViewModel
 public sealed class MonitorViewModel : INotifyPropertyChanged
 {
     private int _selectedModeIndex = -1;
+    private double _brightness;
+    private double _contrast;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -76,6 +78,65 @@ public sealed class MonitorViewModel : INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
+
+    // ------------------------------------------------------- level sliders
+
+    public bool HasBrightness { get; set; }
+
+    public bool HasContrast { get; set; }
+
+    public Visibility BrightnessVisibility => HasBrightness ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ContrastVisibility => HasContrast ? Visibility.Visible : Visibility.Collapsed;
+
+    public double BrightnessMaximum { get; set; } = 100;
+
+    public double ContrastMaximum { get; set; } = 100;
+
+    public double Brightness
+    {
+        get => _brightness;
+        set
+        {
+            if (Math.Abs(_brightness - value) < 0.5)
+            {
+                return;
+            }
+
+            _brightness = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BrightnessText));
+        }
+    }
+
+    public double Contrast
+    {
+        get => _contrast;
+        set
+        {
+            if (Math.Abs(_contrast - value) < 0.5)
+            {
+                return;
+            }
+
+            _contrast = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ContrastText));
+        }
+    }
+
+    public string BrightnessText => $"{(int)_brightness} / {(int)BrightnessMaximum}";
+
+    public string ContrastText => $"{(int)_contrast} / {(int)ContrastMaximum}";
+
+    /// <summary>
+    /// Value last known to be on the panel. A slider raises ValueChanged when
+    /// its template is first realized, which must not be echoed back to the
+    /// monitor; comparing against this suppresses exactly those events.
+    /// </summary>
+    internal uint AppliedBrightness { get; set; }
+
+    internal uint AppliedContrast { get; set; }
 
     /// <summary>
     /// Suppresses the selection-changed handler while the view model is being

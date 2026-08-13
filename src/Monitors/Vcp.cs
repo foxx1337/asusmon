@@ -36,6 +36,33 @@ internal static class Vcp
     public const byte ToggleSettings2 = 0xFD;
 }
 
+/// <summary>A continuous 0..max VCP feature that <c>set</c> can drive directly.</summary>
+internal sealed record LevelFeature(string Id, string Name, byte Code, string[] Aliases)
+{
+    public static readonly LevelFeature Brightness =
+        new("brightness", "Brightness", Vcp.Brightness, ["bright", "lum", "luminance"]);
+
+    public static readonly LevelFeature Contrast =
+        new("contrast", "Contrast", Vcp.Contrast, ["cont"]);
+
+    public static readonly IReadOnlyList<LevelFeature> All = [Brightness, Contrast];
+
+    /// <summary>Matches a command-line token against the id or any alias.</summary>
+    public static LevelFeature? Resolve(string token)
+    {
+        foreach (LevelFeature feature in All)
+        {
+            if (string.Equals(feature.Id, token, StringComparison.OrdinalIgnoreCase) ||
+                feature.Aliases.Contains(token, StringComparer.OrdinalIgnoreCase))
+            {
+                return feature;
+            }
+        }
+
+        return null;
+    }
+}
+
 /// <summary>ASUS monitor families. Each has its own GameVisual code table.</summary>
 internal enum ProductLine
 {
