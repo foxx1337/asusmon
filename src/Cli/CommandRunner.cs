@@ -236,6 +236,11 @@ internal sealed class CommandRunner
 
         string token = cli.Args[0];
 
+        if (ShadowBoost.IsVerb(token))
+        {
+            return SetShadowBoost(cli);
+        }
+
         if (LevelFeature.Resolve(token) is { } feature)
         {
             return SetLevel(cli, feature);
@@ -351,6 +356,96 @@ internal sealed class CommandRunner
         }
 
         _out.WriteLine($"{display.Model ?? display.Description}: {feature.Name} -> {clamped} / {max}");
+        return ExitCode.Success;
+    }
+
+    /// <summary>
+    /// Sets Shadow Boost (VCP 0xE5). Vendor-specific, so the panel is checked
+    /// for ASUS identity and for an 0xE5 declaration before writing.
+    /// </summary>
+    private int SetShadowBoost(CommandLine cli)
+    {
+        string options = string.Join(", ", ShadowBoost.Options.Select(o => o.Id));
+
+        if (cli.Args.Length < 2)
+        {
+            _error.WriteLine($"error: 'set shadowboost' requires a level. One of: {options}.");
+            return ExitCode.UsageError;
+        }
+
+        string token = cli.Args[1];
+
+        if (ShadowBoost.Resolve(token) is not { } option)
+        {
+            _error.WriteLine($"error: '{token}' is not a Shadow Boost level.");
+            _error.WriteLine($"       available: {options}");
+            return ExitCode.UsageError;
+        }
+
+        using DisplaySet displays = OpenDisplays(cli);
+        AsusDisplay? display = displays.Select(cli.MonitorIndex);
+
+        if (display is null)
+        {
+            _error.WriteLine("error: no matching monitor.");
+            return ExitCode.NoMonitor;
+        }
+
+        string name = display.Model ?? display.Description;
+
+        if (!display.IsAsus)
+        {
+            _error.WriteLine($"error: {display.Description} is not an ASUS display; Shadow Boost is not available.");
+            return ExitCode.UnknownMode;
+        }
+
+        // 0xFE is the sentinel DisplayWidgetCenter reads as "feature absent".
+        // The panel reports it per-preset, so distinguish "this monitor never
+        // has Shadow Boost" from "the active preset does not apply it".
+        if (display.Read(ShadowBoost.Code) is not { } current || current.Current == 0xFE || current.Maximum == 0xFE)
+        {
+            GameVisualMode? active = display.ReadCurrentMode().Mode;
+
+            if (display.IsHdrActive)
+            {
+                _error.WriteLine($"error: {name} does not apply Shadow Boost while the panel is in HDR.");
+            }
+            else if (active is { } preset &&
+                     ShadowBoost.PresetsWithoutSupport.Contains(preset.Id, StringComparer.OrdinalIgnoreCase))
+            {
+                _error.WriteLine(
+                    $"error: the {preset.Name} preset does not apply Shadow Boost. " +
+                    "Switch to another GameVisual preset first.");
+            }
+            else
+            {
+                _error.WriteLine($"error: {name} does not support Shadow Boost (VCP 0x{ShadowBoost.Code:X2}).");
+            }
+
+            return ExitCode.DdcFailure;
+        }
+
+        if (display.Capabilities?.ValuesFor(ShadowBoost.Code) is { Count: > 0 } declared &&
+            !declared.Contains(option.Value))
+        {
+            _error.WriteLine($"error: {name} does not advertise Shadow Boost '{option.Id}'.");
+            _error.WriteLine(
+                "       declared: " +
+                string.Join(", ", declared.Select(v =>
+                    ShadowBoost.Options.FirstOrDefault(o => o.Value == v)?.Id ?? $"0x{v:X2}")));
+            return ExitCode.UnknownMode;
+        }
+
+        if (!display.ApplyLevel(ShadowBoost.Code, option.Value, out uint readBack))
+        {
+            _error.WriteLine(
+                readBack == uint.MaxValue
+                    ? $"error: the monitor did not accept a write to 0x{ShadowBoost.Code:X2}."
+                    : $"error: wrote 0x{option.Value:X2} to 0x{ShadowBoost.Code:X2} but the monitor reports 0x{readBack:X2}.");
+            return ExitCode.DdcFailure;
+        }
+
+        _out.WriteLine($"{name}: Shadow Boost -> {option.Name}");
         return ExitCode.Success;
     }
 
@@ -530,9 +625,7 @@ internal sealed class CommandRunner
               status                 Current settings for every monitor (default)
               list                   Monitors plus every GameVisual preset they advertise
               modes                  Bare list of preset ids, one per line (script friendly)
-              set <mode>             Switch GameVisual preset, e.g. 'asusmon set fps'
-              set brightness <n>     Set brightness, absolute (40) or relative (+10, -10)
-              set contrast <n>       Set contrast, absolute or relative
+              set <setting> [value]  Change a setting, see 'settings' below
               caps                   Dump the raw MCCS capability string
               vcp <code> [value]     Read, or write, a raw VCP feature code
               cache [show|path|clear] Inspect or discard the capability cache
@@ -545,6 +638,11 @@ internal sealed class CommandRunner
               -c, --console          Force console output even without an attached console
                   --refresh          Re-read capability strings instead of using the cache
                   --no-cache         Bypass the capability cache entirely
+            """);
+
+        PrintSettings();
+
+        _out.WriteLine("""
 
             examples:
               asusmon list
@@ -552,6 +650,8 @@ internal sealed class CommandRunner
               asusmon set racing --monitor 0
               asusmon set brightness 40
               asusmon set contrast +5
+              asusmon set shadowboost level2
+              asusmon set sb dynamic
               asusmon vcp 0xDC
               asusmon vcp 0x10 40          # brightness to 40
               asusmon status --json
@@ -562,5 +662,47 @@ internal sealed class CommandRunner
 
             Started from Explorer this program shows a WinUI summary window instead.
             """);
+    }
+
+    /// <summary>
+    /// Documents everything <c>set</c> accepts. Generated from the feature
+    /// tables so the help can never drift away from what the parser allows.
+    /// </summary>
+    private void PrintSettings()
+    {
+        _out.WriteLine();
+        _out.WriteLine("settings for 'set':");
+        _out.WriteLine("  <preset>               A GameVisual preset id, name or alias.");
+        _out.WriteLine("                         Run 'asusmon modes' for the ones your panel offers.");
+
+        foreach (LevelFeature feature in LevelFeature.All)
+        {
+            _out.WriteLine($"  {feature.Id,-22} 0 to the panel maximum, or relative (+10, -10).");
+            _out.WriteLine($"                         also: {string.Join(", ", feature.Aliases)}");
+        }
+
+        _out.WriteLine($"  {"shadowboost <level>",-22} ASUS only, VCP 0x{ShadowBoost.Code:X2}. Levels below.");
+        _out.WriteLine($"                         also: {string.Join(", ", ShadowBoost.VerbAliases.Skip(1))}");
+        _out.WriteLine();
+        _out.WriteLine("  shadow boost levels:");
+
+        int width = ShadowBoost.Options.Max(o => o.Id.Length);
+
+        foreach (EnumOption option in ShadowBoost.Options)
+        {
+            string aliases = option.Aliases is { Length: > 0 } list
+                ? $"  also: {string.Join(", ", list)}"
+                : string.Empty;
+
+            _out.WriteLine($"    {option.Id.PadRight(width)}  {option.Name,-20}{aliases}");
+        }
+
+        _out.WriteLine();
+        _out.WriteLine("  Level names match with or without spaces, e.g. \"Level 2\" or level2.");
+        _out.WriteLine("  All setting and level names are case insensitive.");
+        _out.WriteLine(
+            "  Shadow Boost is reported as unavailable by the sRGB, sRGB Cal and MOBA");
+        _out.WriteLine(
+            "  presets, and while the panel is in HDR.");
     }
 }

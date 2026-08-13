@@ -36,6 +36,52 @@ internal static class Vcp
     public const byte ToggleSettings2 = 0xFD;
 }
 
+/// <summary>One named value of a discrete VCP feature, e.g. Shadow Boost Level 2.</summary>
+internal sealed record EnumOption(string Id, string Name, uint Value, string[]? Aliases = null)
+{
+    public bool Matches(string token) =>
+        Id.Equals(token, StringComparison.OrdinalIgnoreCase) ||
+        Name.Equals(token, StringComparison.OrdinalIgnoreCase) ||
+        Name.Replace(" ", string.Empty).Equals(token, StringComparison.OrdinalIgnoreCase) ||
+        (Aliases?.Any(a => a.Equals(token, StringComparison.OrdinalIgnoreCase)) ?? false);
+}
+
+/// <summary>
+/// Shadow Boost, VCP 0xE5. Lifts shadow detail without washing out midtones.
+/// Names come from the combo box DisplayWidgetCenter builds in
+/// <c>GameVisualPage</c>; the value mapping is confirmed by
+/// <c>CapabilityConfigManager.GetShadowBoostConfig</c>, which keys on "e5".
+/// </summary>
+internal static class ShadowBoost
+{
+    public const byte Code = Vcp.ShadowBoost;
+
+    /// <summary>Tokens accepted in place of <c>shadowboost</c> after <c>set</c>.</summary>
+    public static readonly string[] VerbAliases = ["shadowboost", "shadow-boost", "shadow", "sb"];
+
+    public static bool IsVerb(string token) =>
+        VerbAliases.Contains(token, StringComparer.OrdinalIgnoreCase);
+
+    public static readonly EnumOption[] Options =
+    [
+        new("off",     "Off",                 0x00, ["0", "none"]),
+        new("level1",  "Level 1",             0x01, ["1", "l1", "low"]),
+        new("level2",  "Level 2",             0x02, ["2", "l2", "medium", "mid"]),
+        new("level3",  "Level 3",             0x03, ["3", "l3", "high"]),
+        new("dynamic", "Dynamic Adjustment",  0x04, ["4", "dyn", "auto"]),
+    ];
+
+    /// <summary>
+    /// GameVisual presets in which the panel reports Shadow Boost as absent,
+    /// matching <c>AppConfig\DisplayModeCapability_Gaming</c>, where the
+    /// <c>ShadowBoost</c> flag is False. Used only to explain the 0xFE reply.
+    /// </summary>
+    public static readonly string[] PresetsWithoutSupport = ["srgb", "srgbcal", "moba"];
+
+    public static EnumOption? Resolve(string token) =>
+        Options.FirstOrDefault(o => o.Matches(token));
+}
+
 /// <summary>A continuous 0..max VCP feature that <c>set</c> can drive directly.</summary>
 internal sealed record LevelFeature(string Id, string Name, byte Code, string[] Aliases)
 {
