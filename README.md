@@ -6,11 +6,13 @@ It talks to the monitor exactly the way DisplayWidgetCenter does — plain DDC/C
 over the video cable via `dxva2.dll` — but as a single ~200 KB executable with no
 services, no tray icon and no background processes.
 
-Primary use case: list and switch **GameVisual** presets from the command line.
+Primary use case: list and switch **GameVisual** presets from the command line,
+plus brightness, contrast and Shadow Boost.
 
 ```
 asusmon list
 asusmon set fps
+asusmon set brightness 40
 ```
 
 ## Hybrid console / GUI
@@ -21,6 +23,12 @@ The executable has one entry point and two faces:
 | --- | --- |
 | A console (cmd, PowerShell, Terminal) | Acts as a CLI, writes to that console, and the shell blocks until it exits |
 | Explorer, Start menu, a shortcut | Opens a WinUI 3 summary window, with no console flashing up |
+
+The window lists every monitor with its GameVisual preset in a drop-down and
+brightness and contrast on sliders, all live. Slider writes are debounced by
+200 ms so that dragging one does not flood the DDC channel, and the value is
+re-read afterwards so the slider shows what the panel actually accepted.
+Shadow Boost is command-line only.
 
 This works because the binary is linked as `IMAGE_SUBSYSTEM_WINDOWS_CUI` *and*
 declares `consoleAllocationPolicy` = `detached` in its manifest, a
@@ -43,7 +51,7 @@ asusmon [options] <command> [arguments]
   status                 Current settings for every monitor (default)
   list                   Monitors plus every GameVisual preset they advertise
   modes                  Bare list of preset ids, one per line (script friendly)
-  set <mode>             Switch GameVisual preset, e.g. 'asusmon set fps'
+  set <setting> [value]  Change a setting, see below
   caps                   Dump the raw MCCS capability string
   vcp <code> [value]     Read, or write, a raw VCP feature code
   cache [show|path|clear] Inspect or discard the capability cache
@@ -57,8 +65,30 @@ asusmon [options] <command> [arguments]
       --no-cache         Bypass the capability cache entirely
 ```
 
-Exit codes: `0` success, `2` bad usage, `3` DDC/CI failure, `4` unknown mode,
-`5` no monitor matched.
+### Settings
+
+`set` takes one of three kinds of setting. Names and values are case
+insensitive, and `asusmon help` prints the full alias list — that help text is
+generated from the same tables the parser uses, so it cannot drift.
+
+| Setting | Values | Aliases |
+| --- | --- | --- |
+| *preset* | any id from `asusmon modes` | preset name, e.g. `"Night Vision"` |
+| `brightness` | `0`-max, or relative `+10` / `-10` | `bright`, `lum`, `luminance` |
+| `contrast` | `0`-max, or relative `+10` / `-10` | `cont` |
+| `shadowboost` | `off`, `level1`, `level2`, `level3`, `dynamic` | `shadow-boost`, `shadow`, `sb` |
+
+Shadow Boost levels also accept the bare digits `0`-`4`, their display names
+(`"Level 2"`, `"Dynamic Adjustment"`), and `none`, `low`, `medium`/`mid`, `high`,
+`dyn`/`auto`.
+
+The maximum for brightness and contrast is read from the panel rather than
+assumed to be 100. Out-of-range values are clamped, with a warning. If a panel
+quantises a value to its own step size, the accepted value is reported instead
+of being treated as a failure.
+
+Exit codes: `0` success, `1` bad usage, `2` no monitor matched, `3` DDC/CI
+failure, `4` unknown mode or setting value.
 
 ### Examples
 
@@ -66,8 +96,12 @@ Exit codes: `0` success, `2` bad usage, `3` DDC/CI failure, `4` unknown mode,
 asusmon                       # status of every monitor
 asusmon set racing            # switch the primary ASUS panel
 asusmon set fps --monitor 0   # switch a specific monitor
+asusmon set brightness 40     # absolute
+asusmon set contrast +5       # relative
+asusmon set shadowboost level2
+asusmon set sb dynamic        # same thing, short form
 asusmon modes                 # ids only, for scripting
-asusmon vcp 0x10 40           # brightness to 40
+asusmon vcp 0x10 40           # brightness to 40, the raw way
 asusmon status --json         # machine readable
 ```
 
@@ -155,6 +189,7 @@ re-read and overwrite it (needed only after a monitor firmware update),
 | `0xDC` | **GameVisual preset** (SDR) |
 | `0xE2` | **GameVisual preset** (HDR / Dolby Vision) |
 | `0xE3` | GameVisual preset on ProArt panels |
+| `0xE5` | **Shadow Boost** |
 | `0xEF` | ASUS vendor identity probe |
 
 `0xEF` is how the app decides a panel is genuinely an ASUS display. Only a
@@ -206,6 +241,40 @@ halves are declared.
 
 A preset only takes effect while the panel is in the matching pipeline: `0xDC`
 applies in SDR, `0xE2` in HDR. `set` warns when the two do not match.
+
+### Shadow Boost
+
+Shadow Boost lifts detail in dark content without washing out midtones. It lives
+on `0xE5`:
+
+| Value | Level |
+| --- | --- |
+| `0x00` | Off |
+| `0x01` | Level 1 |
+| `0x02` | Level 2 |
+| `0x03` | Level 3 |
+| `0x04` | Dynamic Adjustment |
+
+Availability is **per GameVisual preset**, not per model. In a preset that does
+not apply it — sRGB, sRGB Cal and MOBA on the Gaming line, matching the
+`ShadowBoost: "False"` rows in DisplayWidgetCenter's
+`AppConfig\DisplayModeCapability_Gaming` — the panel answers a read of `0xE5`
+with `current=0xFE max=0xFE`, the same sentinel DisplayWidgetCenter treats as
+"feature absent". `set shadowboost` checks for that and names the preset
+responsible rather than reporting a generic failure.
+
+### Where the code map comes from
+
+Codes below `0xE0` are VESA MCCS standard, so brightness at `0x10` and contrast
+at `0x12` are documented and vendor-neutral; Windows' own `GetMonitorBrightness`
+is a wrapper over `0x10`.
+
+The vendor range has no such backing. `0xDC`, `0xE2`, `0xE5` and `0xEF` were
+taken from DisplayWidgetCenter's own `VCPAPI` class, which ships unobfuscated
+and passes each code as a literal in a named method (`SetShadowBoost` →
+`SetVCPFeatureInternal(hMonitor, 229u, ...)`), cross-checked against its
+`AirVisionVCPCode` enum and its retained log strings, then confirmed against the
+live panel by writing each value and reading it back.
 
 ## Requirements
 
